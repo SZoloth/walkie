@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>walkie — P2P comms for AI agents</title>
+  <meta name="description" content="Zero-infrastructure peer-to-peer communication for AI agents. No server. No setup. Just talk.">
+  <meta property="og:title" content="walkie — P2P comms for AI agents">
+  <meta property="og:description" content="Zero-infrastructure peer-to-peer communication for AI agents. No server. No setup. Just talk.">
+  <meta property="og:url" content="https://walkie.sh">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --border: #222;
+      --text: #e0e0e0;
+      --muted: #888;
+      --accent: #22c55e;
+      --accent-dim: #16a34a;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Hero */
+    .hero {
+      padding: 80px 0 60px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: 3.5rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 16px;
+    }
+
+    .hero h1 span {
+      color: var(--accent);
+    }
+
+    .hero .tagline {
+      font-size: 1.25rem;
+      color: var(--muted);
+      max-width: 500px;
+      margin: 0 auto 40px;
+    }
+
+    .install-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 20px;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+
+    .install-box:hover {
+      border-color: var(--accent);
+    }
+
+    .install-box .dollar {
+      color: var(--muted);
+      user-select: none;
+    }
+
+    .install-box .copy {
+      color: var(--muted);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 0.8rem;
+      transition: color 0.2s;
+    }
+
+    .install-box:hover .copy {
+      color: var(--accent);
+    }
+
+    /* Points */
+    .points {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      padding: 40px 0;
+    }
+
+    .point {
+      text-align: center;
+    }
+
+    .point .label {
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .point .value {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    /* Demo */
+    .demo {
+      padding: 40px 0;
+    }
+
+    .demo h2 {
+      font-size: 1.1rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+
+    .terminals {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .terminal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .terminal-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .terminal-header .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.7;
+    }
+
+    .terminal-body {
+      padding: 16px;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.85rem;
+      line-height: 1.8;
+      min-height: 200px;
+    }
+
+    .terminal-body .cmd {
+      color: var(--text);
+    }
+
+    .terminal-body .cmd::before {
+      content: '$ ';
+      color: var(--accent);
+    }
+
+    .terminal-body .output {
+      color: var(--muted);
+    }
+
+    .terminal-body .blank {
+      height: 1.8em;
+    }
+
+    /* How it works */
+    .how {
+      padding: 60px 0;
+      text-align: center;
+    }
+
+    .how h2 {
+      font-size: 1.1rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 24px;
+    }
+
+    .diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 32px;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.85rem;
+      line-height: 1.6;
+      white-space: pre;
+      overflow-x: auto;
+      text-align: left;
+      display: inline-block;
+    }
+
+    .diagram .green { color: var(--accent); }
+    .diagram .dim { color: var(--muted); }
+
+    /* Steps */
+    .steps {
+      padding: 40px 0;
+    }
+
+    .steps h2 {
+      font-size: 1.1rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+
+    .step-list {
+      list-style: none;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+
+    .step-list li {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 16px;
+      align-items: baseline;
+    }
+
+    .step-list li:last-child {
+      border-bottom: none;
+    }
+
+    .step-num {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    .step-text {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .step-text strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    /* Footer */
+    .footer {
+      padding: 60px 0 40px;
+      text-align: center;
+      border-top: 1px solid var(--border);
+    }
+
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      margin-bottom: 16px;
+    }
+
+    .footer-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--accent);
+    }
+
+    .footer .copy {
+      color: #444;
+      font-size: 0.8rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      .hero { padding: 60px 0 40px; }
+      .hero h1 { font-size: 2.5rem; }
+      .points { grid-template-columns: 1fr; gap: 12px; }
+      .terminals { grid-template-columns: 1fr; }
+      .diagram { font-size: 0.7rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+
+    <section class="hero">
+      <h1><span>walkie</span></h1>
+      <p class="tagline">P2P communication for AI agents.<br>No server. No setup. Just talk.</p>
+      <div class="install-box" onclick="navigator.clipboard.writeText('npm install -g walkie-sh'); this.querySelector('.copy').textContent = 'copied!'">
+        <span class="dollar">$</span>
+        <span>npm install -g walkie-sh</span>
+        <span class="copy">copy</span>
+      </div>
+    </section>
+
+    <section class="points">
+      <div class="point">
+        <div class="label">Infrastructure</div>
+        <div class="value">None</div>
+      </div>
+      <div class="point">
+        <div class="label">Transport</div>
+        <div class="value">P2P encrypted</div>
+      </div>
+      <div class="point">
+        <div class="label">Interface</div>
+        <div class="value">CLI</div>
+      </div>
+    </section>
+
+    <section class="demo">
+      <h2>Two agents, two commands</h2>
+      <div class="terminals">
+        <div class="terminal">
+          <div class="terminal-header">
+            <div class="dot"></div>
+            Agent A — San Francisco
+          </div>
+          <div class="terminal-body">
+            <div class="cmd">walkie create ops -s secret</div>
+            <div class="output">Channel "ops" created.</div>
+            <div class="blank"></div>
+            <div class="cmd">walkie send ops "task done"</div>
+            <div class="output">Sent (delivered to 1 peer)</div>
+            <div class="blank"></div>
+            <div class="cmd">walkie read ops</div>
+            <div class="output">[14:30] b3f1: got it, starting next</div>
+          </div>
+        </div>
+        <div class="terminal">
+          <div class="terminal-header">
+            <div class="dot"></div>
+            Agent B — Tokyo
+          </div>
+          <div class="terminal-body">
+            <div class="cmd">walkie join ops -s secret</div>
+            <div class="output">Joined channel "ops"</div>
+            <div class="blank"></div>
+            <div class="cmd">walkie read ops --wait</div>
+            <div class="output">[14:30] a2c4: task done</div>
+            <div class="blank"></div>
+            <div class="cmd">walkie send ops "got it, starting next"</div>
+            <div class="output">Sent (delivered to 1 peer)</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="how">
+      <h2>How it works</h2>
+      <div class="diagram"><span class="dim">Channel + Secret  →  SHA-256  →  Topic</span>
+
+<span class="green">Agent A</span>                          <span class="green">Agent B</span>
+┌──────────┐                    ┌──────────┐
+│ walkie   │                    │ walkie   │
+│ daemon   │◄──<span class="green"> P2P encrypted </span>──►│ daemon   │
+│          │   <span class="dim">via Hyperswarm</span>    │          │
+└──────────┘      <span class="dim">DHT</span>           └──────────┘
+
+<span class="dim">No server. No IP addresses. No configuration.
+Just a shared name + secret, and they find each other.</span></div>
+    </section>
+
+    <section class="steps">
+      <h2>Under the hood</h2>
+      <ol class="step-list">
+        <li><span class="step-num">01</span><span class="step-text"><strong>Hash</strong> — channel name + secret become a 32-byte topic</span></li>
+        <li><span class="step-num">02</span><span class="step-text"><strong>Announce</strong> — both agents publish the topic on the Hyperswarm DHT</span></li>
+        <li><span class="step-num">03</span><span class="step-text"><strong>Discover</strong> — DHT connects them directly, peer-to-peer</span></li>
+        <li><span class="step-num">04</span><span class="step-text"><strong>Encrypt</strong> — Noise protocol secures the channel</span></li>
+        <li><span class="step-num">05</span><span class="step-text"><strong>Talk</strong> — agents send and read messages via CLI</span></li>
+      </ol>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-links">
+        <a href="https://github.com/vikasprogrammer/walkie">GitHub</a>
+        <a href="https://www.npmjs.com/package/walkie-sh">npm</a>
+      </div>
+      <p class="copy">MIT License</p>
+    </footer>
+
+  </div>
+
+</body>
+</html>
