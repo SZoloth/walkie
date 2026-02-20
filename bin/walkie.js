@@ -2,17 +2,34 @@
 
 const { program } = require('commander')
 const { request } = require('../src/client')
+const { validateSecret, generateSecret } = require('../src/crypto')
+
+function checkSecret(secret) {
+  const result = validateSecret(secret)
+  if (!result.valid) {
+    console.error(`Warning: ${result.message}`)
+    process.exit(1)
+  }
+}
 
 program
   .name('walkie')
-  .description('P2P communication CLI for AI agents')
-  .version('0.1.0')
+  .description('P2P communication CLI for AI agents (hardened fork)')
+  .version('0.2.0')
+
+program
+  .command('keygen')
+  .description('Generate a strong random secret')
+  .action(() => {
+    console.log(generateSecret())
+  })
 
 program
   .command('create <channel>')
   .description('Create a channel and wait for peers')
-  .requiredOption('-s, --secret <secret>', 'Shared secret')
+  .requiredOption('-s, --secret <secret>', 'Shared secret (min 16 chars, use `walkie keygen`)')
   .action(async (channel, opts) => {
+    checkSecret(opts.secret)
     try {
       const resp = await request({ action: 'join', channel, secret: opts.secret })
       if (resp.ok) {
@@ -30,8 +47,9 @@ program
 program
   .command('join <channel>')
   .description('Join an existing channel')
-  .requiredOption('-s, --secret <secret>', 'Shared secret')
+  .requiredOption('-s, --secret <secret>', 'Shared secret (min 16 chars, use `walkie keygen`)')
   .action(async (channel, opts) => {
+    checkSecret(opts.secret)
     try {
       const resp = await request({ action: 'join', channel, secret: opts.secret })
       if (resp.ok) {

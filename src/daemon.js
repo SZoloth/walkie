@@ -8,6 +8,11 @@ const WALKIE_DIR = process.env.WALKIE_DIR || path.join(process.env.HOME, '.walki
 const SOCKET_PATH = path.join(WALKIE_DIR, 'daemon.sock')
 const PID_FILE = path.join(WALKIE_DIR, 'daemon.pid')
 const LOG_FILE = path.join(WALKIE_DIR, 'daemon.log')
+const LOCK_FILE = path.join(WALKIE_DIR, 'daemon.lock')
+
+const MAX_IPC_BUFFER = 1024 * 1024       // 1MB
+const MAX_PEER_BUFFER = 1024 * 1024      // 1MB
+const MAX_MESSAGE_SIZE = 256 * 1024      // 256KB
 
 function log(...args) {
   const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`
@@ -18,12 +23,32 @@ class WalkieDaemon {
   constructor() {
     this.id = agentId()
     this.swarm = new Hyperswarm()
-    this.channels = new Map()  // name -> { topicHex, discovery, peers: Set, messages: [], waiters: [] }
-    this.peers = new Map()     // remoteKey hex -> { conn, channels: Set }
+    this.channels = new Map()
+    this.peers = new Map()
   }
 
   async start() {
-    fs.mkdirSync(WALKIE_DIR, { recursive: true })
+    fs.mkdirSync(WALKIE_DIR, { recursive: true, mode: 0o700 })
+
+    // Advisory lock to prevent double-daemon
+    try {
+      this._lockFd = fs.openSync(LOCK_FILE, 'w')
+      // Try non-blocking exclusive lock via flock (Node doesn't expose flock,
+      // so we use the PID-check approach as fallback)
+    } catch {}
+
+    // Check for stale daemon
+    try {
+      const oldPid = parseInt(fs.readFileSync(PID_FILE, 'utf8'), 10)
+      if (oldPid && oldPid !== process.pid) {
+        try {
+          process.kill(oldPid, 0) // Check if alive
+          log(`Another daemon already running pid=${oldPid}, exiting`)
+          process.exit(1)
+        } catch {} // Not alive, stale PID file
+      }
+    } catch {}
+
     fs.writeFileSync(PID_FILE, process.pid.toString())
 
     // Clean stale socket
@@ -31,7 +56,10 @@ class WalkieDaemon {
 
     // IPC server for CLI commands
     const server = net.createServer(sock => this._onIPC(sock))
-    server.listen(SOCKET_PATH)
+    server.listen(SOCKET_PATH, () => {
+      // Restrict socket to owner only
+      try { fs.chmodSync(SOCKET_PATH, 0o600) } catch {}
+    })
 
     // P2P connections
     this.swarm.on('connection', (conn, info) => this._onPeer(conn, info))
@@ -39,7 +67,7 @@ class WalkieDaemon {
     process.on('SIGTERM', () => this.shutdown())
     process.on('SIGINT', () => this.shutdown())
 
-    log(`Daemon started id=${this.id} pid=${process.pid}`)
+    log(`Daemon started pid=${process.pid}`)
   }
 
   // ── IPC (CLI <-> Daemon) ──────────────────────────────────────────
@@ -48,6 +76,14 @@ class WalkieDaemon {
     let buf = ''
     socket.on('data', data => {
       buf += data.toString()
+
+      // Buffer overflow protection
+      if (buf.length > MAX_IPC_BUFFER) {
+        socket.write(JSON.stringify({ ok: false, error: 'Request too large' }) + '\n')
+        socket.destroy()
+        return
+      }
+
       let idx
       while ((idx = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, idx)
@@ -75,6 +111,11 @@ class WalkieDaemon {
           break
         }
         case 'send': {
+          // Message size limit
+          if (cmd.message && Buffer.byteLength(cmd.message) > MAX_MESSAGE_SIZE) {
+            reply({ ok: false, error: `Message too large (max ${MAX_MESSAGE_SIZE / 1024}KB)` })
+            return
+          }
           const count = this._send(cmd.channel, cmd.message)
           reply({ ok: true, delivered: count })
           break
@@ -83,13 +124,11 @@ class WalkieDaemon {
           const ch = this.channels.get(cmd.channel)
           if (!ch) { reply({ ok: false, error: `Not in channel: ${cmd.channel}` }); return }
 
-          // If messages available or no wait requested, return immediately
           if (ch.messages.length > 0 || !cmd.wait) {
             reply({ ok: true, messages: ch.messages.splice(0) })
             return
           }
 
-          // Wait mode: hold connection until a message arrives or timeout
           const timeout = (cmd.timeout || 30) * 1000
           const timer = setTimeout(() => {
             ch.waiters = ch.waiters.filter(w => w !== waiter)
@@ -140,10 +179,10 @@ class WalkieDaemon {
 
     const topic = deriveTopic(name, secret)
     const topicHex = topic.toString('hex')
-    log(`Joining channel "${name}" topic=${topicHex.slice(0, 16)}...`)
+    log(`Joining topic=${topicHex.slice(0, 16)}...`)
     const discovery = this.swarm.join(topic, { server: true, client: true })
     await discovery.flushed()
-    log(`Channel "${name}" flushed, discoverable`)
+    log(`Topic ${topicHex.slice(0, 16)} flushed, discoverable`)
 
     this.channels.set(name, {
       topicHex,
@@ -153,8 +192,6 @@ class WalkieDaemon {
       waiters: []
     })
 
-    // Re-announce topics to already-connected peers (fixes race condition
-    // where peer connects before channel is registered)
     this._reannounce()
   }
 
@@ -163,17 +200,15 @@ class WalkieDaemon {
     const hello = JSON.stringify({ t: 'hello', topics, id: this.id }) + '\n'
     for (const [remoteKey, peer] of this.peers) {
       if (peer.conn?.writable) {
-        log(`Re-announcing ${topics.length} topic(s) to ${remoteKey.slice(0, 12)}`)
+        log(`Re-announcing ${topics.length} topic(s) to peer ${remoteKey.slice(0, 8)}`)
         peer.conn.write(hello)
       }
-      // Also match this peer against our newly added channels
-      // (handles case where we received their hello before our channel was ready)
       if (peer.knownTopics) {
-        for (const [name, ch] of this.channels) {
+        for (const [, ch] of this.channels) {
           if (peer.knownTopics.has(ch.topicHex) && !ch.peers.has(remoteKey)) {
             ch.peers.add(remoteKey)
-            peer.channels.add(name)
-            log(`Late-matched channel "${name}" with peer ${remoteKey.slice(0, 12)}`)
+            peer.channels.add(ch.topicHex.slice(0, 8))
+            log(`Late-matched topic ${ch.topicHex.slice(0, 8)} with peer ${remoteKey.slice(0, 8)}`)
           }
         }
       }
@@ -191,18 +226,24 @@ class WalkieDaemon {
 
   _onPeer(conn, info) {
     const remoteKey = conn.remotePublicKey.toString('hex')
-    log(`Peer connected: ${remoteKey.slice(0, 12)}...`)
+    log(`Peer connected: ${remoteKey.slice(0, 8)}`)
 
     const peer = { conn, channels: new Set(), buf: '' }
     this.peers.set(remoteKey, peer)
 
-    // Send handshake: our active topic list
     const topics = Array.from(this.channels.values()).map(ch => ch.topicHex)
-    log(`Sending hello with ${topics.length} topic(s)`)
     conn.write(JSON.stringify({ t: 'hello', topics, id: this.id }) + '\n')
 
     conn.on('data', data => {
       peer.buf += data.toString()
+
+      // Buffer overflow protection — disconnect abusive peer
+      if (peer.buf.length > MAX_PEER_BUFFER) {
+        log(`Peer ${remoteKey.slice(0, 8)} exceeded buffer limit, disconnecting`)
+        conn.destroy()
+        return
+      }
+
       let idx
       while ((idx = peer.buf.indexOf('\n')) !== -1) {
         const line = peer.buf.slice(0, idx)
@@ -227,24 +268,29 @@ class WalkieDaemon {
 
     if (msg.t === 'hello') {
       const theirTopics = new Set(msg.topics || [])
-      peer.knownTopics = theirTopics  // Store for late-matching
-      log(`Got hello from ${remoteKey.slice(0, 12)} with ${theirTopics.size} topic(s)`)
-      for (const [name, ch] of this.channels) {
+      peer.knownTopics = theirTopics
+      log(`Hello from peer ${remoteKey.slice(0, 8)} with ${theirTopics.size} topic(s)`)
+      for (const [, ch] of this.channels) {
         if (theirTopics.has(ch.topicHex) && !ch.peers.has(remoteKey)) {
           ch.peers.add(remoteKey)
-          peer.channels.add(name)
-          log(`Matched channel "${name}" with peer ${remoteKey.slice(0, 12)}`)
+          peer.channels.add(ch.topicHex.slice(0, 8))
+          log(`Matched topic ${ch.topicHex.slice(0, 8)} with peer ${remoteKey.slice(0, 8)}`)
         }
       }
       return
     }
 
     if (msg.t === 'msg') {
-      for (const [name, ch] of this.channels) {
+      // Message size check from peer
+      if (msg.data && Buffer.byteLength(msg.data) > MAX_MESSAGE_SIZE) {
+        log(`Dropped oversized message from peer ${remoteKey.slice(0, 8)}`)
+        return
+      }
+
+      for (const [, ch] of this.channels) {
         if (ch.topicHex === msg.topic) {
           const entry = { from: msg.id || remoteKey.slice(0, 8), data: msg.data, ts: msg.ts }
 
-          // If someone is waiting, deliver directly
           if (ch.waiters.length > 0) {
             const waiter = ch.waiters.shift()
             waiter([entry])
@@ -287,6 +333,10 @@ class WalkieDaemon {
   async shutdown() {
     try { fs.unlinkSync(SOCKET_PATH) } catch {}
     try { fs.unlinkSync(PID_FILE) } catch {}
+    if (this._lockFd != null) {
+      try { fs.closeSync(this._lockFd) } catch {}
+    }
+    try { fs.unlinkSync(LOCK_FILE) } catch {}
     await this.swarm.destroy()
     process.exit(0)
   }
