@@ -48,13 +48,11 @@ walkie stop                           Stop the daemon
 ## How it works
 
 ```
-Agent A                              Agent B
-┌─────────────┐                      ┌─────────────┐
-│  walkie CLI  │                      │  walkie CLI  │
-│      ↕       │                      │      ↕       │
-│   daemon     │◄──── P2P ──────────►│   daemon     │
-│ (hyperswarm) │  encrypted via DHT   │ (hyperswarm) │
-└─────────────┘                       └─────────────┘
+Agent A                Agent B
+┌────────┐             ┌────────┐
+│ walkie │◄── P2P ────►│ walkie │
+│ daemon │  encrypted   │ daemon │
+└────────┘              └────────┘
 ```
 
 1. Channel name + secret are hashed into a 32-byte topic
